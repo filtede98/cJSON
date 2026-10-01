@@ -70,11 +70,85 @@ static void cjson_utils_functions_shouldnt_crash_with_null_pointers(void)
     cJSON_Delete(item);
 }
 
+static void cjson_utils_merge_patch_case_sensitive_nested(void)
+{
+    cJSON *from = cJSON_Parse("{\"sub\":{\"key\":\"val\"}}");
+    cJSON *to = cJSON_Parse("{\"sub\":{\"KEY\":\"val\"}}");
+    cJSON *patch = NULL;
+
+    TEST_ASSERT_NOT_NULL(from);
+    TEST_ASSERT_NOT_NULL(to);
+
+    patch = cJSONUtils_GenerateMergePatchCaseSensitive(from, to);
+    TEST_ASSERT_NOT_NULL(patch);
+    /* In case-sensitive mode, key and KEY are distinct, so sub must be patched */
+    TEST_ASSERT_NOT_NULL(cJSON_GetObjectItemCaseSensitive(patch, "sub"));
+
+    cJSON_Delete(patch);
+    cJSON_Delete(from);
+    cJSON_Delete(to);
+}
+
+static void cjson_utils_array_index_pointer_hardening(void)
+{
+    cJSON *arr = cJSON_Parse("[\"zero\", \"one\"]");
+    TEST_ASSERT_NOT_NULL(arr);
+
+    /* RFC 6901: empty array token is invalid */
+    TEST_ASSERT_NULL(cJSONUtils_GetPointer(arr, "/"));
+    TEST_ASSERT_NULL(cJSONUtils_GetPointerCaseSensitive(arr, "/"));
+
+    /* Valid index */
+    TEST_ASSERT_NOT_NULL(cJSONUtils_GetPointer(arr, "/0"));
+    TEST_ASSERT_NOT_NULL(cJSONUtils_GetPointer(arr, "/1"));
+    TEST_ASSERT_NULL(cJSONUtils_GetPointer(arr, "/2"));
+
+    /* Integer overflow protection */
+    TEST_ASSERT_NULL(cJSONUtils_GetPointer(arr, "/18446744073709551615999999"));
+
+    cJSON_Delete(arr);
+}
+
+static void cjson_core_hardening_tests(void)
+{
+    char buf[16];
+    cJSON *num = cJSON_CreateNumber(42);
+    cJSON *str = cJSON_CreateString("hello world");
+    cJSON *obj = cJSON_CreateObject();
+    cJSON *unlinked = cJSON_CreateString("unlinked");
+    cJSON *repl = cJSON_CreateString("replacement");
+
+    TEST_ASSERT_NOT_NULL(num);
+    TEST_ASSERT_NOT_NULL(str);
+    TEST_ASSERT_NOT_NULL(obj);
+    TEST_ASSERT_NOT_NULL(unlinked);
+    TEST_ASSERT_NOT_NULL(repl);
+
+    /* Zero-length buffer rejection */
+    TEST_ASSERT_FALSE(cJSON_PrintPreallocated(num, buf, 0, false));
+
+    /* Unlinked item rejection in ReplaceItemViaPointer */
+    cJSON_AddItemToObject(obj, "first", num);
+    TEST_ASSERT_FALSE(cJSON_ReplaceItemViaPointer(obj, unlinked, repl));
+
+    /* cJSON_SetValuestring overlapping safety */
+    TEST_ASSERT_NOT_NULL(cJSON_SetValuestring(str, str->valuestring + 6));
+    TEST_ASSERT_EQUAL_STRING("world", str->valuestring);
+
+    cJSON_Delete(obj);
+    cJSON_Delete(str);
+    cJSON_Delete(unlinked);
+    cJSON_Delete(repl);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
 
     RUN_TEST(cjson_utils_functions_shouldnt_crash_with_null_pointers);
+    RUN_TEST(cjson_utils_merge_patch_case_sensitive_nested);
+    RUN_TEST(cjson_utils_array_index_pointer_hardening);
+    RUN_TEST(cjson_core_hardening_tests);
 
     return UNITY_END();
 }
